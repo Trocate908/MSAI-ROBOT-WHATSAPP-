@@ -36,14 +36,6 @@ async function restoreSessionFromBase64() {
   }
   
   try {
-    const authExists = await fs.access(AUTH_FOLDER).then(() => true).catch(() => false);
-    const credsExists = authExists && await fs.access(`${AUTH_FOLDER}/creds.json`).then(() => true).catch(() => false);
-    
-    if (credsExists) {
-      log('📦 Session already exists, skipping restore', 'cyan');
-      return true;
-    }
-    
     log('📦 Restoring session from WHATSAPP_SESSION...', 'cyan');
     
     await fs.rm(AUTH_FOLDER, { recursive: true, force: true }).catch(() => {});
@@ -86,7 +78,7 @@ async function convertSessionToBase64() {
   }
 }
 
-function printPairingCode(code, phoneNumber) {
+function printPairingCode(code) {
   console.log();
   console.log(`${colors.magenta}╔══════════════════════════════════════════════════════════════╗${colors.reset}`);
   console.log(`${colors.magenta}║                    🔐 YOUR PAIRING CODE 🔐                    ║${colors.reset}`);
@@ -96,8 +88,7 @@ function printPairingCode(code, phoneNumber) {
   console.log(`${colors.magenta}║                                                              ║${colors.reset}`);
   console.log(`${colors.magenta}╚══════════════════════════════════════════════════════════════╝${colors.reset}`);
   console.log();
-  log(`📱 Phone: +${phoneNumber}`, 'cyan');
-  log('⚠️  Enter this code in WhatsApp QUICKLY (expires in 60 seconds):', 'yellow');
+  log('⚠️  Enter this code in WhatsApp: Settings > Linked Devices > Link with phone number', 'yellow');
   console.log();
 }
 
@@ -113,14 +104,8 @@ function printBanner() {
   console.log();
 }
 
-let globalSock = null;
-let keepAliveInterval = null;
-
 export async function startBot() {
   printBanner();
-  
-  const phoneNumber = process.env.PHONE_NUMBER;
-  const formattedNumber = phoneNumber ? phoneNumber.replace(/[^0-9]/g, '') : null;
   
   await restoreSessionFromBase64();
   
@@ -139,46 +124,19 @@ export async function startBot() {
     browser: Browsers.ubuntu('Chrome'),
     syncFullHistory: false,
     version,
-    defaultQueryTimeoutMs: 60000,
-    connectTimeoutMs: 60000,
-    keepAliveIntervalMs: 30000,
-    markOnlineOnConnect: true,
   });
   
-  globalSock = sock;
   let pairingCodeRequested = false;
-  
-  if (keepAliveInterval) {
-    clearInterval(keepAliveInterval);
-  }
   
   sock.ev.on('creds.update', saveCreds);
   
   sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect, qr } = update;
-    
-    if (qr && formattedNumber && !pairingCodeRequested && !sock.authState.creds.registered) {
-      pairingCodeRequested = true;
-      
-      log(`📱 Requesting pairing code for: +${formattedNumber}`, 'cyan');
-      
-      try {
-        const code = await sock.requestPairingCode(formattedNumber);
-        printPairingCode(code, formattedNumber);
-      } catch (error) {
-        log(`❌ Failed to get pairing code: ${error.message}`, 'red');
-        pairingCodeRequested = false;
-      }
-    }
+    const { connection, lastDisconnect } = update;
     
     if (connection === 'open') {
       log('✅ MSI XMD Bot connected to WhatsApp!', 'green');
       log('🤖 Bot is now running. Prefix: . (dot)', 'cyan');
       log('📝 Try sending .menu to see available commands', 'blue');
-      
-      keepAliveInterval = setInterval(() => {
-        log('💓 Keep-alive ping', 'blue');
-      }, 5 * 60 * 1000);
       
       if (!process.env.WHATSAPP_SESSION) {
         log('⏳ Waiting 2 minutes for session sync...', 'yellow');
@@ -206,41 +164,47 @@ export async function startBot() {
       
       log(`⚠️ Connection closed. Status: ${statusCode}`, 'yellow');
       
-      if (keepAliveInterval) {
-        clearInterval(keepAliveInterval);
-        keepAliveInterval = null;
-      }
-      
       if (shouldReconnect) {
-        log('🔄 Reconnecting in 3 seconds...', 'blue');
-        pairingCodeRequested = false;
+        log('🔄 Reconnecting...', 'blue');
         await delay(3000);
         startBot();
       } else {
-        log('❌ Logged out. Please update WHATSAPP_SESSION and redeploy.', 'red');
+        log('❌ Logged out. Please delete session and re-pair.', 'red');
       }
     }
   });
   
-  if (!formattedNumber && !sock.authState.creds.registered) {
+  const phoneNumber = process.env.PHONE_NUMBER;
+  
+  if (phoneNumber && !sock.authState.creds.registered) {
+    await delay(2000);
+    
+    if (!pairingCodeRequested) {
+      pairingCodeRequested = true;
+      
+      const formattedNumber = phoneNumber.replace(/[^0-9]/g, '');
+      log(`📱 Requesting pairing code for: +${formattedNumber}`, 'cyan');
+      
+      try {
+        const code = await sock.requestPairingCode(formattedNumber);
+        printPairingCode(code);
+      } catch (error) {
+        log(`❌ Failed to get pairing code: ${error.message}`, 'red');
+      }
+    }
+  } else if (!phoneNumber && !sock.authState.creds.registered) {
     log('⚠️ No PHONE_NUMBER set. Please set PHONE_NUMBER environment variable.', 'yellow');
+    log('   Format: +1234567890 (with country code)', 'yellow');
   }
   
   sock.ev.on('messages.upsert', async (m) => {
     if (m.type !== 'notify') return;
     
     for (const msg of m.messages) {
-      try {
-        if (!msg.message) continue;
-        if (msg.key.fromMe) continue;
-        if (msg.key.remoteJid === 'status@broadcast') continue;
-        
-        log(`📨 Message received from: ${msg.key.remoteJid}`, 'cyan');
-        
-        await handleMessage(sock, msg);
-      } catch (error) {
-        log(`❌ Error processing message: ${error.message}`, 'red');
-      }
+      if (!msg.message) continue;
+      if (msg.key.fromMe) continue;
+      
+      await handleMessage(sock, msg);
     }
   });
   
