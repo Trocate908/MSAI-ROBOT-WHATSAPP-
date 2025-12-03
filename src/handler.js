@@ -1,4 +1,4 @@
-import { commands } from './commands/index.js';
+import { commands } from '../commands/index.js';
 
 const PREFIX = '.';
 
