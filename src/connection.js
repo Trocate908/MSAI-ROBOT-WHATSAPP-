@@ -28,6 +28,11 @@ function log(message, color = 'reset') {
   console.log(`${colors[color]}[${timestamp}] ${message}${colors.reset}`);
 }
 
+// Track reconnection attempts
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 10;
+let isConnected = false;
+
 async function restoreSessionFromBase64() {
   const sessionBase64 = process.env.WHATSAPP_SESSION;
   
@@ -79,16 +84,20 @@ async function convertSessionToBase64() {
 }
 
 function printPairingCode(code) {
+  // Format the code as WhatsApp expects: XXXX-XXXX
+  const formattedCode = code.match(/.{1,4}/g).join('-').toUpperCase();
+  
   console.log();
   console.log(`${colors.magenta}╔══════════════════════════════════════════════════════════════╗${colors.reset}`);
   console.log(`${colors.magenta}║                    🔐 YOUR PAIRING CODE 🔐                    ║${colors.reset}`);
   console.log(`${colors.magenta}╠══════════════════════════════════════════════════════════════╣${colors.reset}`);
   console.log(`${colors.magenta}║                                                              ║${colors.reset}`);
-  console.log(`${colors.magenta}║                        ${code}                        ║${colors.reset}`);
+  console.log(`${colors.magenta}║                   ${formattedCode}                   ║${colors.reset}`);
   console.log(`${colors.magenta}║                                                              ║${colors.reset}`);
   console.log(`${colors.magenta}╚══════════════════════════════════════════════════════════════╝${colors.reset}`);
   console.log();
-  log('⚠️  Enter this code in WhatsApp: Settings > Linked Devices > Link with phone number', 'yellow');
+  log('📱 Enter this 8-character code in WhatsApp:', 'yellow');
+  log('   Settings > Linked Devices > Link with phone number', 'yellow');
   console.log();
 }
 
@@ -124,6 +133,13 @@ export async function startBot() {
     browser: Browsers.ubuntu('Chrome'),
     syncFullHistory: false,
     version,
+    // ADD THESE OPTIONS FOR BETTER STABILITY:
+    markOnlineOnConnect: false, // Don't show online immediately
+    defaultQueryTimeoutMs: 60000, // Increase timeout
+    keepAliveIntervalMs: 30000, // Send keep-alive every 30 seconds
+    connectTimeoutMs: 60000, // Increase connection timeout
+    emitOwnEvents: false, // Reduce event emissions
+    retryRequestDelayMs: 1000, // Retry delay for failed requests
   });
   
   let pairingCodeRequested = false;
@@ -131,12 +147,26 @@ export async function startBot() {
   sock.ev.on('creds.update', saveCreds);
   
   sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect } = update;
+    const { connection, lastDisconnect, qr } = update;
     
     if (connection === 'open') {
+      isConnected = true;
+      reconnectAttempts = 0; // Reset reconnection attempts
       log('✅ MSI XMD Bot connected to WhatsApp!', 'green');
       log('🤖 Bot is now running. Prefix: . (dot)', 'cyan');
       log('📝 Try sending .menu to see available commands', 'blue');
+      
+      // Send periodic keep-alive messages
+      setInterval(async () => {
+        if (isConnected) {
+          try {
+            await sock.sendPresenceUpdate('available');
+            log('🫀 Keep-alive sent', 'blue');
+          } catch (error) {
+            log(`⚠️ Keep-alive failed: ${error.message}`, 'yellow');
+          }
+        }
+      }, 60000); // Every 60 seconds
       
       if (!process.env.WHATSAPP_SESSION) {
         log('⏳ Waiting 2 minutes for session sync...', 'yellow');
@@ -159,25 +189,42 @@ export async function startBot() {
     }
     
     if (connection === 'close') {
+      isConnected = false;
       const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const errorMessage = lastDisconnect?.error?.message || 'Unknown error';
+      
+      log(`⚠️ Connection closed. Status: ${statusCode || 'N/A'}`, 'yellow');
+      log(`📝 Error: ${errorMessage}`, 'yellow');
+      
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
       
-      log(`⚠️ Connection closed. Status: ${statusCode}`, 'yellow');
-      
-      if (shouldReconnect) {
-        log('🔄 Reconnecting...', 'blue');
-        await delay(3000);
+      if (shouldReconnect && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+        reconnectAttempts++;
+        const delayTime = Math.min(5000 * reconnectAttempts, 30000); // Exponential backoff
+        
+        log(`🔄 Reconnecting... Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`, 'blue');
+        log(`⏳ Waiting ${delayTime/1000} seconds before reconnect`, 'yellow');
+        
+        await delay(delayTime);
         startBot();
+      } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        log('❌ Max reconnection attempts reached. Please restart the bot.', 'red');
       } else {
         log('❌ Logged out. Please delete session and re-pair.', 'red');
       }
+    }
+    
+    // Handle QR code if needed (fallback)
+    if (qr && !sock.authState.creds.registered) {
+      log('⚠️ Using QR code as fallback...', 'yellow');
+      // You can add QR code display here if needed
     }
   });
   
   const phoneNumber = process.env.PHONE_NUMBER;
   
   if (phoneNumber && !sock.authState.creds.registered) {
-    await delay(2000);
+    await delay(3000);
     
     if (!pairingCodeRequested) {
       pairingCodeRequested = true;
@@ -188,8 +235,14 @@ export async function startBot() {
       try {
         const code = await sock.requestPairingCode(formattedNumber);
         printPairingCode(code);
+        
+        // Also log the raw code for debugging
+        log(`🔢 Raw code: ${code}`, 'blue');
+        
       } catch (error) {
         log(`❌ Failed to get pairing code: ${error.message}`, 'red');
+        log('⚠️  Make sure your phone number is correct and includes country code', 'yellow');
+        log('   Example: +1234567890', 'yellow');
       }
     }
   } else if (!phoneNumber && !sock.authState.creds.registered) {
@@ -198,6 +251,7 @@ export async function startBot() {
   }
   
   sock.ev.on('messages.upsert', async (m) => {
+    if (!isConnected) return; // Don't process messages if not connected
     if (m.type !== 'notify') return;
     
     for (const msg of m.messages) {
@@ -208,6 +262,12 @@ export async function startBot() {
     }
   });
   
+  // Handle connection errors
+  sock.ev.on('connection.update', (update) => {
+    if (update.connection === 'connecting') {
+      log('🔄 Connecting to WhatsApp...', 'blue');
+    }
+  });
+  
   return sock;
 }
- 
