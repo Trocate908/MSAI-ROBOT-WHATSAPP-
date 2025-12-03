@@ -1,12 +1,9 @@
-const makeWASocket = require("@whiskeysockets/baileys").default;
-const {
-    useMultiFileAuthState,
-    fetchLatestBaileysVersion
-} = require("@whiskeysockets/baileys");
-require("dotenv").config();
+import makeWASocket, { useMultiFileAuthState, fetchLatestBaileysVersion } from "@whiskeysockets/baileys";
+import dotenv from "dotenv";
+dotenv.config();
 
-async function connectBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('./session'); 
+export async function startBot() {
+    const { state, saveCreds } = await useMultiFileAuthState('./session');
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
@@ -15,28 +12,22 @@ async function connectBot() {
         printQRInTerminal: false
     });
 
-    // 🔥 Generate Pairing Code
     if (!sock.authState?.creds?.registered) {
-        let code = await sock.requestPairingCode(process.env.PHONE_NUMBER);
-        console.log("\n🔐 Your WhatsApp Pairing Code:");
-        console.log("======================================");
-        console.log("  📱  " + code);
-        console.log("======================================\n");
-        console.log("Go to: Linked Devices → Link with Code\n");
+        const code = await sock.requestPairingCode(process.env.PHONE_NUMBER);
+        console.log("\n🔐 Your WhatsApp Pairing Code:\n");
+        console.log("👉 " + code);
+        console.log("\nLink from WhatsApp >> Linked Devices >> Link with Code\n");
     }
 
-    // 🔄 Auto reconnect if connection drops
     sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on("connection.update", ({ connection, lastDisconnect }) => {
-        if (connection === "open") console.log("🟢 Bot Connected Successfully!");
+    sock.ev.on("connection.update", ({ connection }) => {
+        if (connection === "open") console.log("🟢 BOT CONNECTED");
         if (connection === "close") {
-            console.log("🔴 Connection Closed. Reconnecting...");
-            connectBot();
+            console.log("🔴 Reconnecting…");
+            startBot();
         }
     });
 
     return sock;
-}
-
-module.exports = connectBot; 
+                    }
