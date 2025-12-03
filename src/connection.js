@@ -30,8 +30,9 @@ function log(message, color = 'reset') {
 
 // Track reconnection attempts
 let reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 10;
+const MAX_RECONNECT_ATTEMPTS = 20;
 let isConnected = false;
+let presenceInterval = null;
 
 async function restoreSessionFromBase64() {
   const sessionBase64 = process.env.WHATSAPP_SESSION;
@@ -133,13 +134,18 @@ export async function startBot() {
     browser: Browsers.ubuntu('Chrome'),
     syncFullHistory: false,
     version,
-    // ADD THESE OPTIONS FOR BETTER STABILITY:
-    markOnlineOnConnect: false, // Don't show online immediately
-    defaultQueryTimeoutMs: 60000, // Increase timeout
-    keepAliveIntervalMs: 30000, // Send keep-alive every 30 seconds
-    connectTimeoutMs: 60000, // Increase connection timeout
-    emitOwnEvents: false, // Reduce event emissions
-    retryRequestDelayMs: 1000, // Retry delay for failed requests
+    // CRITICAL OPTIONS FOR STABILITY:
+    markOnlineOnConnect: true,
+    defaultQueryTimeoutMs: 60000,
+    keepAliveIntervalMs: 15000, // Reduced for better keep-alive
+    connectTimeoutMs: 30000,
+    emitOwnEvents: true,
+    generateHighQualityLinkPreview: false,
+    shouldIgnoreJid: (jid) => false,
+    retryRequestDelayMs: 250,
+    maxMsgRetryCount: 5,
+    // Add mobile browser user agent for better compatibility
+    browser: Browsers.appropriate('Chrome'),
   });
   
   let pairingCodeRequested = false;
@@ -152,21 +158,35 @@ export async function startBot() {
     if (connection === 'open') {
       isConnected = true;
       reconnectAttempts = 0; // Reset reconnection attempts
+      
       log('✅ MSI XMD Bot connected to WhatsApp!', 'green');
       log('🤖 Bot is now running. Prefix: . (dot)', 'cyan');
       log('📝 Try sending .menu to see available commands', 'blue');
       
-      // Send periodic keep-alive messages
-      setInterval(async () => {
+      // Send initial presence update
+      try {
+        await sock.sendPresenceUpdate('available');
+        log('📱 Initial presence sent', 'blue');
+      } catch (error) {
+        // Silent fail
+      }
+      
+      // Clear any existing interval
+      if (presenceInterval) {
+        clearInterval(presenceInterval);
+      }
+      
+      // Send periodic presence updates every 25 seconds
+      presenceInterval = setInterval(async () => {
         if (isConnected) {
           try {
             await sock.sendPresenceUpdate('available');
-            log('🫀 Keep-alive sent', 'blue');
+            // Don't log every presence update to reduce console noise
           } catch (error) {
-            log(`⚠️ Keep-alive failed: ${error.message}`, 'yellow');
+            // Silent fail for presence updates
           }
         }
-      }, 60000); // Every 60 seconds
+      }, 25000); // Every 25 seconds
       
       if (!process.env.WHATSAPP_SESSION) {
         log('⏳ Waiting 2 minutes for session sync...', 'yellow');
@@ -190,17 +210,34 @@ export async function startBot() {
     
     if (connection === 'close') {
       isConnected = false;
+      
+      // Clear presence interval
+      if (presenceInterval) {
+        clearInterval(presenceInterval);
+        presenceInterval = null;
+      }
+      
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const errorMessage = lastDisconnect?.error?.message || 'Unknown error';
       
       log(`⚠️ Connection closed. Status: ${statusCode || 'N/A'}`, 'yellow');
-      log(`📝 Error: ${errorMessage}`, 'yellow');
+      
+      // Handle specific WhatsApp error codes
+      if (statusCode === 515) {
+        log('📱 WhatsApp closed connection (515). Possible reasons:', 'red');
+        log('   1. Multiple sessions detected', 'yellow');
+        log('   2. Logged in on phone or another device', 'yellow');
+        log('   3. Too many linked devices (max 4)', 'yellow');
+        log('   4. WhatsApp server restart', 'yellow');
+      } else if (statusCode === 428) {
+        log('📱 Connection timeout. Reconnecting...', 'yellow');
+      }
       
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
       
       if (shouldReconnect && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
         reconnectAttempts++;
-        const delayTime = Math.min(5000 * reconnectAttempts, 30000); // Exponential backoff
+        const delayTime = Math.min(5000 * reconnectAttempts, 60000); // Max 60 seconds
         
         log(`🔄 Reconnecting... Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`, 'blue');
         log(`⏳ Waiting ${delayTime/1000} seconds before reconnect`, 'yellow');
@@ -209,6 +246,7 @@ export async function startBot() {
         startBot();
       } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
         log('❌ Max reconnection attempts reached. Please restart the bot.', 'red');
+        log('💡 Try removing some linked devices from WhatsApp Settings > Linked Devices', 'yellow');
       } else {
         log('❌ Logged out. Please delete session and re-pair.', 'red');
       }
@@ -217,7 +255,11 @@ export async function startBot() {
     // Handle QR code if needed (fallback)
     if (qr && !sock.authState.creds.registered) {
       log('⚠️ Using QR code as fallback...', 'yellow');
-      // You can add QR code display here if needed
+    }
+    
+    // Handle connecting state
+    if (connection === 'connecting') {
+      log('🔄 Connecting to WhatsApp...', 'blue');
     }
   });
   
@@ -262,12 +304,25 @@ export async function startBot() {
     }
   });
   
-  // Handle connection errors
-  sock.ev.on('connection.update', (update) => {
-    if (update.connection === 'connecting') {
-      log('🔄 Connecting to WhatsApp...', 'blue');
-    }
+  // Handle other important events
+  sock.ev.on('messages.update', () => {
+    // Keep connection active when messages are updated
+  });
+  
+  sock.ev.on('presence.update', () => {
+    // Keep connection active on presence updates
   });
   
   return sock;
 }
+
+// Clean up on exit
+process.on('SIGINT', () => {
+  log('🛑 Shutting down bot...', 'red');
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  log('🛑 Shutting down bot...', 'red');
+  process.exit(0);
+});
