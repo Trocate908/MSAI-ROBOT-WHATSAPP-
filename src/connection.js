@@ -10,7 +10,7 @@ import { promises as fs } from 'fs';
 import pino from 'pino';
 import { handleMessage } from './handler.js';
 
-const AUTH_FOLDER = './auth_info_baileys';
+const AUTH_FOLDER = '../auth_info_baileys';
 const logger = pino({ level: 'silent' });
 
 const colors = {
