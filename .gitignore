@@ -1,6 +1,5 @@
 node_modules/
-auth_info_baileys/
-session_backup/
-*.log
 .env
-.env.local
+auth_info_baileys/
+*.log
+.DS_Store

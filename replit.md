@@ -1,74 +1,53 @@
-# MSI XMD Bot - WhatsApp Bot
+# MSAI Whats - WhatsApp Bot
 
 ## Overview
-MSI XMD is a WhatsApp bot built with Baileys and Node.js. It supports commands with the "." prefix and is designed for easy deployment on Render.
-
-## Features
-- Command-based bot with "." prefix
-- Automatic pairing code generation (no QR codes)
-- Session persistence via Base64 encoding
-- Deployable on Render with environment variables
-- Extensible command system
-
-## Commands
-| Command | Aliases | Description |
-|---------|---------|-------------|
-| .menu | .help, .commands | Show all available commands |
-| .ping | .p | Check bot response time |
-| .alive | .bot, .test | Check if bot is online |
-| .info | .botinfo, .status | Show system information |
-| .sticker | .s, .stiker | Convert image to sticker |
-
-## Environment Variables
-| Variable | Description | Required |
-|----------|-------------|----------|
-| PHONE_NUMBER | WhatsApp number with country code (e.g., +1234567890) | Yes (for pairing) |
-| WHATSAPP_SESSION | Base64 encoded session string | No (auto-generated after pairing) |
-
-## How to Deploy on Render
-
-### Step 1: First-time Pairing (on Replit)
-1. Set `PHONE_NUMBER` environment variable to your WhatsApp number
-2. Run the bot with `npm start`
-3. Enter the 6-digit pairing code in WhatsApp
-4. Wait 2 minutes for session sync
-5. Copy the Base64 session string that appears
-
-### Step 2: Deploy to Render
-1. Create a new Web Service on Render
-2. Connect your GitHub repository
-3. Set environment variables:
-   - `WHATSAPP_SESSION`: Paste the Base64 session from Step 1
-4. Deploy!
+MSAI Whats is a WhatsApp bot built with Node.js and the Baileys library. It uses phone number pairing for authentication and responds to commands with professional formatting.
 
 ## Project Structure
 ```
-├── index.js                 # Entry point
 ├── src/
-│   ├── connection.js        # WhatsApp connection & pairing
-│   ├── handler.js           # Message & command handler
-│   └── commands/
-│       ├── index.js         # Command registry
-│       ├── menu.js          # Menu command
-│       ├── ping.js          # Ping command
-│       ├── alive.js         # Alive command
-│       ├── info.js          # Info command
-│       └── sticker.js       # Sticker command
-├── package.json
-├── replit.md
-└── .gitignore
+│   ├── index.js      # Main bot entry point with connection logic
+│   ├── commands.js   # Command handler with case statement structure
+│   └── config.js     # Bot configuration and message templates
+├── auth_info_baileys/ # Stored credentials (auto-generated)
+├── package.json      # Project dependencies
+└── .gitignore        # Git ignore rules
 ```
 
-## Adding New Commands
-1. Create a new file in `src/commands/` (e.g., `mycommand.js`)
-2. Export a command object with: name, aliases, description, category, execute
-3. Import and add to the commandList in `src/commands/index.js`
+## Environment Variables
+- `PHONE_NUMBER` - Your WhatsApp phone number (format: countrycode + number, e.g., 1234567890)
 
-## Technical Details
-- Uses @whiskeysockets/baileys for WhatsApp Web API
-- Session stored in `auth_info_baileys/` folder
-- Sessions converted to Base64 for easy environment variable storage
-- Auto-reconnection on connection loss
+## Commands
+All commands start with `!` prefix:
+- `!help` - Show all available commands
+- `!ping` - Check bot response time
+- `!info` - Get bot information
+- `!menu` - Display the main menu
+- `!about` - Learn about this bot
+- `!owner` - Get owner contact information
+- `!time` - Get current date and time
+- `!sticker` - Sticker creation info
+
+## How It Works
+1. Bot starts and requests pairing code using PHONE_NUMBER
+2. User enters the 8-digit pairing code in WhatsApp
+3. Credentials are saved to `auth_info_baileys/` folder
+4. Bot sends success message to user's inbox
+5. Bot listens for messages and responds to commands
+
+## Running the Bot
+```bash
+npm start
+```
 
 ## Recent Changes
-- December 2025: Full bot implementation with command system
+- December 2024: Initial bot setup with Baileys integration
+- Implemented pairing code authentication
+- Added command handler with case statement structure
+- Added professional response formatting
+
+## Technical Details
+- Runtime: Node.js 20
+- WhatsApp Library: @whiskeysockets/baileys
+- Logging: pino (silent mode for clean output)
+- Authentication: Multi-file auth state persistence

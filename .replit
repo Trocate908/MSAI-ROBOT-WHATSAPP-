@@ -15,15 +15,15 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "MSI XMD Bot"
+args = "MSAI Whats Bot"
 
 [[workflows.workflow]]
-name = "MSI XMD Bot"
+name = "MSAI Whats Bot"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "node index.js"
+args = "npm start"
 
 [workflows.workflow.metadata]
 outputType = "console"
